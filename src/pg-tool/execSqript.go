@@ -130,6 +130,10 @@ func openConnection(connString string) (err error) {
 		conn = nil
 	}
 
+	if connString, err = parseConnectionString(connString); err != nil {
+		return
+	}
+
 	var cfg *pgx.ConnConfig
 
 	if cfg, err = pgx.ParseConfig(connString); err != nil {

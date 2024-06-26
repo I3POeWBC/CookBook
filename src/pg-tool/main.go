@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	connFlag        *string        = flag.String("conn", "postgres://master:xx1234@localhost:5432/app", "Строка подключения к серверу в формате postgres://username<:password>@<address><:port>/<database name>.")
+	connFlag        *string        = flag.String("conn", "postgres://master@localhost:5432/app", "Строка подключения к серверу в формате postgres://username<:password>@<address><:port>/<database name>.")
 	connCfgFlag     *string        = flag.String("conn-cfg", "", "Если определено, то указывает на YAML файл с описание строки соединения.")
 	cmdFlag         *string        = flag.String("cmd", "", "Если не пусто, то команда для выполнения.")
 	scriptFlag      *string        = flag.String("script", "script.sql", "Файл со скриптом.")

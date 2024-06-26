@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/term"
 )
 
 type Sample struct {
@@ -113,56 +115,78 @@ func TestConnection(t *testing.T) {
 
 	mustNewLogger("log/test.log")
 
-	reStr := `^postgres://(([^:@]+)(:([^@]+))?[@])(([^:]+)([:]([0-9]+))?)([/].+)?$`
-	re := regexp.MustCompile(reStr)
-
 	timeout := time.Second * 5
 
 	for k, v := range samples {
-		if !re.MatchString(v.Value) {
-			t.Fatalf("[%d] строка подключения [%s] не прошла проверку", k, v.Value)
+
+		cs, err := parseConnectionString(v.Value)
+		if err != nil && !v.Assert {
+			log.Printf("[%d]: [%s] pass", k, v.Note)
+			return
+		}
+
+		log.Printf("Строка подключения [%s]\n", cs)
+
+		if cfg, err := pgx.ParseConfig(cs); err != nil {
+			t.Fatalf("parseConnectionString: [%v]", err)
 		} else {
+			func() {
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+				defer cancel()
 
-			//if cfg, err := parseConnectionString(v.Value, timeout); err != nil {
-			if cfg, err := pgx.ParseConfig(v.Value); err != nil {
-				t.Fatalf("parseConnectionString: [%v]", err)
-			} else {
-				func() {
-					ctx, cancel := context.WithTimeout(context.Background(), timeout)
-					defer cancel()
+				cfg.TLSConfig = nil
 
-					cfg.TLSConfig = nil
+				if conn, err := pgx.ConnectConfig(ctx, cfg); err != nil {
+					log.Printf("[%d] (%s) не удалось подключиться строкой [%s] err: [%v]", k, v.Note, v.Value, err)
+					t.Fatalf("[%d] (%s) не удалось подключиться строкой [%s] err: [%v]", k, v.Note, v.Value, err)
+				} else {
+					defer conn.Close(ctx)
+					log.Printf("[%d] (%s) OK %s \n", k, v.Note, v.Value)
+				}
 
-					if conn, err := pgx.ConnectConfig(ctx, cfg); err != nil {
-						t.Fatalf("[%d] (%s) не удалось подключиться строкой [%s] err: [%v]", k, v.Note, v.Value, err)
-					} else {
-						defer conn.Close(ctx)
-						log.Printf("[%d] (%s) OK %s \n", k, v.Note, v.Value)
-					}
-
-				}()
-
-			}
+			}()
 
 		}
 	}
 
 }
 
-func checkConnect(ctx context.Context, connection string) (err error) {
+func TestParseConnectionString(t *testing.T) {
 
-	var cfg *pgx.ConnConfig
-	if cfg, err = pgx.ParseConfig(connection); err != nil {
-		return err
+	samples := []Sample{
+		//{"postgres://master:xx1234@localhost:5432/postgress", true, "Вариант со всеми элементами, адрес текст"},
+		{"postgres://master:xx1234@localhost:5432/app", true, "Вариант со всеми элементами, адрес текст"},
+		{"postgres://master@localhost:5432/app", false, "Вариант со всеми элементами, адрес текст"},
 	}
-	_ = cfg
 
-	conn, err := pgx.Connect(ctx, connection)
-	if err != nil {
-		err = fmt.Errorf("Unable to connect to database: %v", err)
-		return
+	mustNewLogger("log/test.log")
+
+	for k, v := range samples {
+		if _, err := parseConnectionString(v.Value); (err == nil) != v.Assert {
+			t.Fatalf("ошибка проверки строки подключения [%d]: [%s] err: [%v]", k, v.Value, err)
+		}
 	}
-	defer conn.Close(ctx)
 
-	return
+	samples = []Sample{
+		//{"postgres://master:xx1234@localhost:5432/postgress", true, "Вариант со всеми элементами, адрес текст"},
+		{"postgres://master@localhost:5432/app", true, "Вариант со всеми элементами, адрес текст"},
+	}
+
+	os.Setenv(DB_PASSWORD, "qwerty")
+
+	for k, v := range samples {
+		if _, err := parseConnectionString(v.Value); (err == nil) != v.Assert {
+			t.Fatalf("ошибка проверки строки подключения [%d]: [%s] err: [%v]", k, v.Value, err)
+		}
+	}
+
+}
+
+func TestReadPassword(t *testing.T) {
+	if pass, errPass := term.ReadPassword(0); errPass != nil || string(pass) == "" {
+		t.Fatalf("с клавиатуры введен пустой пароль или произошли ошибки err: [%v]", errPass)
+	} else {
+		fmt.Printf("Password: [%s]\n", string(pass))
+	}
+
 }
