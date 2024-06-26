@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"log"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -20,13 +23,29 @@ const (
 	EXEC = "EXEC"
 )
 
-type OutputExec struct {
+type IIndex interface {
+	GetIndex() int
+}
+
+type OutputBase struct {
 	Index    int           `json:"index"`
 	Cmd      string        `json:"cmd"`
 	Error    error         `json:"error"`
 	Duration time.Duration `json:"duration"`
 	Type     string        `json:"type"`
-	Affected string        `json:"affected"`
+}
+
+func (base *OutputBase) GetIndex() int {
+	return base.Index
+}
+
+type OutputExec struct {
+	OutputBase
+	Affected string `json:"affected"`
+}
+
+type OutputSelect struct {
+	OutputBase
 }
 
 var (
@@ -87,18 +106,39 @@ func execSript(script string) {
 		switch queryType {
 		case SEL:
 		case EXEC:
-			execCmd(v)
+			execCmd(k, v)
 		}
 	}
 
 }
 
-func execCmd(cmd string) (err error) {
+func execCmd(index int, cmd string) (err error) {
 
 	ctxExec, cancelExe := context.WithTimeout(context.Background(), *timeoutFlag)
 	defer cancelExe()
 
-	tag, err := conn.Exec(ctxExec, cmd)
+	var (
+		now time.Time = time.Now()
+		tag pgconn.CommandTag
+	)
+
+	defer func() {
+		output := &OutputExec{
+			OutputBase: OutputBase{
+				Index:    index,
+				Cmd:      cmd,
+				Error:    err,
+				Duration: time.Since(now),
+				Type:     EXEC,
+			},
+			Affected: fmt.Sprint(tag.RowsAffected()),
+		}
+
+		saveCmdResult(output)
+
+	}()
+
+	tag, err = conn.Exec(ctxExec, cmd)
 	if err != nil {
 		log.Printf("ошибка выполнения [%v]", err)
 		return
@@ -176,5 +216,22 @@ func cleanOutput() (err error) {
 
 	}
 
+	return
+}
+
+func saveCmdResult(a any) (err error) {
+
+	ii := a.(IIndex)
+
+	filePath := filepath.Join(*outDirFlag, fmt.Sprint(ii.GetIndex())) + ".json"
+
+	var bs []byte
+	if bs, err = json.MarshalIndent(a, "", "  "); err != nil {
+		err = fmt.Errorf("saveCmdResult ошибка маршалинга err: [%v]", err)
+		return
+	} else if err = os.WriteFile(filePath, bs, 0644); err != nil {
+		err = fmt.Errorf("saveCmdResult ошибка записи файла err: [%v]", err)
+		return
+	}
 	return
 }
